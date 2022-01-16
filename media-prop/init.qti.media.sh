@@ -2,7 +2,7 @@
 #==============================================================================
 #       init.qti.media.sh
 #
-# Copyright (c) 2020, The Linux Foundation. All rights reserved.
+# Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -30,6 +30,8 @@
 # IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #===============================================================================
 
+build_codename=`getprop vendor.media.system.build_codename`
+
 if [ -f /sys/devices/soc0/soc_id ]; then
     soc_hwid=`cat /sys/devices/soc0/soc_id` 2> /dev/null
 else
@@ -45,6 +47,12 @@ case "$target" in
                sku_ver=`cat /sys/devices/platform/soc/5a00000.qcom,vidc1/sku_version` 2> /dev/null
                if [ $sku_ver -eq 1 ]; then
                    setprop vendor.media.target.version 3
+               fi
+               ;;
+           518)
+               setprop vendor.media.target.version 3
+               if [ $build_codename -le "12" ]; then
+                   setprop vendor.netflix.bsp_rev "Q6115-31409-1"
                fi
                ;;
            *)

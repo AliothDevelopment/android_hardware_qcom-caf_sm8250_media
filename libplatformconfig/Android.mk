@@ -13,6 +13,7 @@ libplatformconfig-def := \
 
 COMMON_CFLAGS := -O3
 
+
 LOCAL_CFLAGS := $(COMMON_CFLAGS) $(libplatformconfig-def)
 
 ifeq ($(TARGET_ENABLE_VIDC_INTSAN), true)

@@ -63,7 +63,7 @@ void venc_dev::venc_get_consumer_usage(OMX_U32* usage)
         DEBUG_PRINT_INFO("Clear UBWC consumer usage bits as 8-bit linear color requested");
     }
 
-    if (venc_handle->is_flip_conv_needed())
+    if (venc_handle->is_flip_conv_needed(NULL))
         *usage = *usage | GRALLOC_USAGE_SW_READ_OFTEN;
 
     if (m_codec == OMX_VIDEO_CodingImageHEIC) {
@@ -767,7 +767,10 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                                 pParam->eProfile);
                         return false;
                     }
-
+                    if(!venc_set_level(pParam->eLevel)) {
+                        DEBUG_PRINT_ERROR("ERROR: Unsuccessful in updating level");
+                        return false;
+                    }
                     if (set_nP_frames(pParam->nPFrames) == false ||
                         (pParam->nBFrames && set_nB_frames(pParam->nBFrames) == false)) {
                         DEBUG_PRINT_ERROR("ERROR: Request for setting intra period failed");
@@ -1275,6 +1278,17 @@ bool venc_dev::venc_set_profile(OMX_U32 eProfile)
     } else {
         DEBUG_PRINT_ERROR("Wrong CODEC");
         return false;
+    }
+
+    if (m_disable_hdr & ENC_HDR_DISABLE_FLAG) {
+        if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_HEVC) {
+            if (eProfile == OMX_VIDEO_HEVCProfileMain10 ||
+                eProfile == OMX_VIDEO_HEVCProfileMain10HDR10 ||
+                eProfile == OMX_VIDEO_HEVCProfileMain10HDR10Plus) {
+                DEBUG_PRINT_ERROR("%s: HDR profile unsupported", __FUNCTION__);
+                return false;
+            }
+        }
     }
 
     if (!profile_level_converter::convert_omx_profile_to_v4l2(m_sVenc_cfg.codectype, eProfile, &control.value)) {

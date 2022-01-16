@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010-2020, Linux Foundation. All rights reserved.
+Copyright (c) 2010-2021, Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -287,6 +287,7 @@ omx_video::omx_video():
     async_thread_created = false;
     msg_thread_created = false;
     msg_thread_stop = false;
+    is_stop_in_progress = false;
 
     OMX_INIT_STRUCT(&m_blurInfo, OMX_QTI_VIDEO_CONFIG_BLURINFO);
     m_blurInfo.nPortIndex == (OMX_U32)PORT_INDEX_IN;
@@ -663,6 +664,7 @@ void omx_video::process_event_cb(void *ctxt)
                         }
                     }
 
+                    is_stop_in_progress = false;
                     break;
 
                 case OMX_COMPONENT_GENERATE_HARDWARE_ERROR:
@@ -4064,6 +4066,14 @@ OMX_ERRORTYPE  omx_video::empty_this_buffer_proxy(OMX_IN OMX_HANDLETYPE  hComp,
         DEBUG_PRINT_ERROR("ERROR: ETBProxy: Input flush in progress");
         return OMX_ErrorNone;
     }
+
+    if (is_stop_in_progress == true) {
+        post_event ((unsigned long)buffer,0,
+                OMX_COMPONENT_GENERATE_EBD);
+        DEBUG_PRINT_ERROR("ERROR: ETBProxy: stop in progress");
+        return OMX_ErrorNone;
+    }
+
     if (!meta_mode_enable) {
         fd = m_pInput_pmem[nBufIndex].fd;
     }
@@ -4893,6 +4903,11 @@ bool omx_video::alloc_map_ion_memory(int size, venc_ion *ion_info, int flag)
         return false;
     }
 
+    if (is_stop_in_progress) {
+        DEBUG_PRINT_ERROR("Stop in progress: do not allocate any memory");
+        return false;
+    }
+
     ion_info->data_fd = -1;
     ion_info->dev_fd = ion_open();
     if (ion_info->dev_fd <= 0) {
@@ -5045,18 +5060,24 @@ void omx_video::initFastCV() {
     m_fastCV_init_done = true;
 }
 
-bool omx_video::is_flip_conv_needed() {
+bool omx_video::is_flip_conv_needed(private_handle_t *handle) {
     OMX_MIRRORTYPE mirror;
     mirror = m_sConfigFrameMirror.eMirror;
     OMX_U32 captureRate = m_nOperatingRate >> 16;
+    bool is_flip_needed = false;
 
     if (m_no_vpss && m_fastCV_init_done && captureRate <= 30 &&
         (mirror == OMX_MirrorVertical || mirror == OMX_MirrorHorizontal ||
          mirror == OMX_MirrorBoth)) {
-        return true;
+        is_flip_needed = true;
     }
 
-    return false;
+    if (handle && !(handle->format == HAL_PIXEL_FORMAT_NV12_ENCODEABLE ||
+            handle->format == HAL_PIXEL_FORMAT_YCbCr_420_SP_VENUS)) {
+        is_flip_needed = false;
+    }
+
+    return is_flip_needed;
 }
 
 OMX_ERRORTYPE omx_video::do_flip_conversion(struct pmem *buffer) {
@@ -5262,6 +5283,44 @@ OMX_ERRORTYPE  omx_video::empty_this_buffer_opaque(OMX_IN OMX_HANDLETYPE hComp,
         m_pCallbacks.EmptyBufferDone(hComp,m_app_data,buffer);
         DEBUG_PRINT_ERROR("ERROR: ETBProxyA: Input flush in progress");
         return OMX_ErrorNone;
+    }
+
+    if (dev_is_meta_mode()) {
+        LEGACY_CAM_METADATA_TYPE * meta_buf = NULL;
+
+        meta_buf = (LEGACY_CAM_METADATA_TYPE *)buffer->pBuffer;
+
+        if (meta_buf && m_no_vpss && is_rotation_enabled() &&
+            meta_buf->buffer_type == kMetadataBufferTypeGrallocSource) {
+            VideoGrallocMetadata *meta_buf = (VideoGrallocMetadata *)buffer->pBuffer;
+#ifdef USE_GBM
+            struct gbm_bo *handle = (struct gbm_bo *)meta_buf->pHandle;
+#else
+            private_handle_t *handle = (private_handle_t *)meta_buf->pHandle;
+#endif
+            if (!handle) {
+                DEBUG_PRINT_ERROR("%s : handle is null!", __FUNCTION__);
+                return OMX_ErrorUndefined;
+            }
+
+            // if input buffer dimensions is different from what is configured,
+            // reject the buffer
+#ifdef USE_GBM
+            if (ALIGN((int)m_sInPortDef.format.video.nFrameWidth,32) != ALIGN(handle->width,32) ||
+                    ALIGN((int)m_sInPortDef.format.video.nFrameHeight,32) != ALIGN(handle->height,32)) {
+                ALOGE("%s: Graphic buf size(%dx%d) does not match configured size(%ux%u)",
+                        __func__, handle->width, handle->height,
+#else
+            if (ALIGN((int)m_sInPortDef.format.video.nFrameWidth,32) != ALIGN(handle->unaligned_width,32) ||
+                    ALIGN((int)m_sInPortDef.format.video.nFrameHeight,32) != ALIGN(handle->unaligned_height,32)) {
+                ALOGE("%s: Graphic buf size(%dx%d) does not match configured size(%ux%u)",
+                        __func__, handle->unaligned_width, handle->unaligned_height,
+#endif
+                        m_sInPortDef.format.video.nFrameWidth, m_sInPortDef.format.video.nFrameHeight);
+                m_pCallbacks.EmptyBufferDone(hComp, m_app_data, buffer);
+                return OMX_ErrorNone;
+            }
+        }
     }
 
     if (!psource_frame) {
@@ -5471,7 +5530,7 @@ OMX_ERRORTYPE omx_video::push_input_buffer(OMX_HANDLETYPE hComp)
             Input_pmem_info.offset = 0;
             Input_pmem_info.size = handle->size;
 
-            if (is_flip_conv_needed()) {
+            if (is_flip_conv_needed(handle)) {
                 ret = do_flip_conversion(&Input_pmem_info);
                 if (ret != OMX_ErrorNone) {
                     return ret;

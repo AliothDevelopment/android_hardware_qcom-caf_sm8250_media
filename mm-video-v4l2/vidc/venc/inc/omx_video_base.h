@@ -232,6 +232,7 @@ class omx_video: public qc_omx_component
         ColorConvertFormat  mC2dDestFmt;
         OMX_U32 mC2DFrameHeight;
         OMX_U32 mC2DFrameWidth;
+        bool is_stop_in_progress;
 
         omx_video();  // constructor
         virtual ~omx_video();  // destructor
@@ -627,7 +628,7 @@ class omx_video: public qc_omx_component
         void complete_pending_buffer_done_cbs();
         bool is_rotation_enabled();
         bool is_conv_needed(private_handle_t *handle);
-        bool is_flip_conv_needed();
+        bool is_flip_conv_needed(private_handle_t *handle);
         OMX_ERRORTYPE do_flip_conversion(struct pmem *buffer);
         void initFastCV();
         void print_debug_color_aspects(ColorAspects *aspects, const char *prefix);
